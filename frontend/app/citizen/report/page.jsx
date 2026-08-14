@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import api from "@/lib/api";
@@ -14,7 +14,9 @@ import {
   CheckCircle2, 
   Compass, 
   ArrowLeft, 
-  Info 
+  Info,
+  Camera,
+  Trash2
 } from "lucide-react";
 
 export default function CitizenReportPage() {
@@ -29,15 +31,61 @@ export default function CitizenReportPage() {
     address: "",
   });
 
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [geoLoading, setGeoLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
-  const [newIssueId, setNewIssueId] = useState(null);
+
+  // Clean up object URL when previewUrl changes or component unmounts
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate image MIME type
+    if (!file.type.startsWith("image/")) {
+      setError("Please select a valid image file (JPG, PNG, WebP).");
+      return;
+    }
+
+    // Validate file size (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+      setError("Image size cannot exceed 10MB.");
+      return;
+    }
+
+    setSelectedFile(file);
+    setError(null);
+
+    // Create object URL for preview
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+  };
+
+  const handleRemovePhoto = () => {
+    setSelectedFile(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
   };
 
   const handleGetLocation = () => {
@@ -64,6 +112,47 @@ export default function CitizenReportPage() {
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
+  };
+
+  const uploadToCloudinary = async (file) => {
+    const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+    const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
+
+    if (!cloudName || !uploadPreset) {
+      throw new Error(
+        "Cloudinary upload configuration missing. Please verify NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET."
+      );
+    }
+
+    const formDataUpload = new FormData();
+    formDataUpload.append("file", file);
+    formDataUpload.append("upload_preset", uploadPreset);
+
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+      {
+        method: "POST",
+        body: formDataUpload,
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const errorMsg =
+        errorData?.error?.message ||
+        `Cloudinary upload failed with status ${response.status}`;
+      throw new Error(errorMsg);
+    }
+
+    const data = await response.json();
+    if (!data.secure_url) {
+      throw new Error("Invalid response received from image upload service.");
+    }
+
+    return {
+      url: data.secure_url,
+      publicId: data.public_id || undefined,
+    };
   };
 
   const handleSubmit = async (e) => {
@@ -100,6 +189,24 @@ export default function CitizenReportPage() {
       return;
     }
 
+    setIsLoading(true);
+
+    // Upload photo to Cloudinary if selected
+    let uploadedPhoto = undefined;
+    if (selectedFile) {
+      setUploadingPhoto(true);
+      try {
+        uploadedPhoto = await uploadToCloudinary(selectedFile);
+      } catch (uploadErr) {
+        setError(`Image Upload Failed: ${uploadErr.message}. Please retry or remove the photo.`);
+        setIsLoading(false);
+        setUploadingPhoto(false);
+        return;
+      }
+      setUploadingPhoto(false);
+    }
+
+    // Assemble payload for backend
     const payload = {
       title: formData.title.trim(),
       description: formData.description.trim(),
@@ -109,15 +216,13 @@ export default function CitizenReportPage() {
         longitude: lng,
         address: formData.address.trim() || undefined,
       },
+      ...(uploadedPhoto && { photo: uploadedPhoto }),
     };
-
-    setIsLoading(true);
 
     try {
       const res = await api.issues.create(payload);
       if (res?.success && res.issue?._id) {
         setSuccess(true);
-        setNewIssueId(res.issue._id);
         setTimeout(() => {
           router.push(`/citizen/issues/${res.issue._id}`);
         }, 1500);
@@ -250,6 +355,71 @@ export default function CitizenReportPage() {
               </p>
             </div>
 
+            {/* Photo Upload Section */}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-900 dark:text-slate-200">
+                Evidence Photo <span className="text-xs text-slate-500 font-normal">(Optional)</span>
+              </label>
+
+              {!previewUrl ? (
+                <div className="border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl p-6 text-center hover:border-blue-400 dark:hover:border-blue-600 transition-colors bg-slate-50/50 dark:bg-slate-900/30">
+                  <input
+                    type="file"
+                    id="photo-input"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFileChange}
+                    disabled={isLoading || success}
+                    className="hidden"
+                  />
+                  <label
+                    htmlFor="photo-input"
+                    className="flex flex-col items-center justify-center cursor-pointer space-y-2"
+                  >
+                    <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-950/60 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                      <Camera className="w-6 h-6" />
+                    </div>
+                    <div className="space-y-0.5">
+                      <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Take a photo or upload from device
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        JPG, PNG, WebP up to 10MB
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              ) : (
+                <div className="relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-900 max-w-md">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewUrl}
+                    alt="Selected evidence preview"
+                    className="w-full h-56 object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent flex items-end justify-between p-3">
+                    <div className="text-white text-xs truncate max-w-[240px]">
+                      <span className="font-medium block truncate">{selectedFile?.name}</span>
+                      <span className="text-[10px] text-slate-300">
+                        {selectedFile ? (selectedFile.size / (1024 * 1024)).toFixed(2) : 0} MB
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleRemovePhoto}
+                      disabled={isLoading || success}
+                      className="h-8 px-2.5 bg-red-600 hover:bg-red-700 text-white text-xs shadow-xs"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1" />
+                      Remove
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Location Section */}
             <div className="p-4 sm:p-5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -326,11 +496,11 @@ export default function CitizenReportPage() {
               </div>
             </div>
 
-            {/* Note regarding photo upload */}
+            {/* Note regarding civic lifecycle */}
             <div className="p-3 rounded-lg bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 flex items-start gap-2.5 text-xs text-blue-700 dark:text-blue-300">
               <Info className="w-4 h-4 mt-0.5 shrink-0" />
               <span>
-                <strong>Note:</strong> Photo attachment and map pin dragging are planned for a future update. All reports currently initialize with status <strong>REPORTED</strong> and priority <strong>MEDIUM</strong>.
+                <strong>Note:</strong> All new civic reports initialize with status <strong>REPORTED</strong> and priority <strong>MEDIUM</strong>. Attached photos are stored securely for municipal verification.
               </span>
             </div>
 
@@ -350,7 +520,7 @@ export default function CitizenReportPage() {
                 {isLoading ? (
                   <span className="flex items-center gap-2">
                     <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Submitting...
+                    {uploadingPhoto ? "Uploading Photo..." : "Submitting Report..."}
                   </span>
                 ) : (
                   "Submit Report"
