@@ -72,8 +72,37 @@ const createIssueSchema = z.object({
   )
 });
 
+// Schema for Admin Status Update
+const updateStatusSchema = z.object({
+  status: z.enum(
+    [
+      'REPORTED',
+      'ACKNOWLEDGED',
+      'IN_PROGRESS',
+      'RESOLVED',
+      'CLOSED'
+    ],
+    {
+      errorMap: () => ({ message: 'Invalid status provided' })
+    }
+  ),
+  note: z.string().trim().max(1000).optional()
+});
+
+// Schema for Admin Issue Resolution
+const resolveIssueSchema = z.object({
+  notes: z
+    .string({ required_error: 'Resolution notes are required' })
+    .trim()
+    .min(1, { message: 'Resolution notes cannot be empty' })
+    .max(2000, { message: 'Resolution notes cannot exceed 2000 characters' })
+});
+
 module.exports = {
   registerSchema,
   loginSchema,
-  createIssueSchema
+  createIssueSchema,
+  updateStatusSchema,
+  resolveIssueSchema
 };
+

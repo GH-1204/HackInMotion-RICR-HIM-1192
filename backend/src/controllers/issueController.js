@@ -1,10 +1,12 @@
 const mongoose = require('mongoose');
 const Issue = require('../models/Issue');
 const { createIssueSchema } = require('../utils/validators');
+const { getDepartmentByCategory } = require('../services/departmentRoutingService');
 
 /**
  * Controller to report/create a new civic issue.
  * Runs after authMiddleware and roleMiddleware (CITIZEN).
+ * Automatically resolves and assigns the active Department based on category.
  */
 const createIssue = async (req, res) => {
   try {
@@ -26,20 +28,31 @@ const createIssue = async (req, res) => {
 
     const { title, description, category, location } = validationResult.data;
 
-    // 2. Create the Issue document
+    // 2. Automatically resolve active department from the issue category
+    const department = await getDepartmentByCategory(category);
+    if (!department) {
+      return res.status(500).json({
+        success: false,
+        message: `No active department configured for category: ${category}`
+      });
+    }
+
+    // 3. Create the Issue document
     // IMPORTANT: citizen is taken strictly from req.user.userId (from JWT)
+    // department is assigned strictly from server-side routing
     const newIssue = new Issue({
       title,
       description,
       category,
       location,
+      department: department._id,
       citizen: req.user.userId
     });
 
-    // 3. Save to MongoDB
+    // 4. Save to MongoDB
     const savedIssue = await newIssue.save();
 
-    // 4. Return successful response
+    // 5. Return successful response
     return res.status(201).json({
       success: true,
       message: 'Issue reported successfully',
@@ -53,6 +66,7 @@ const createIssue = async (req, res) => {
     });
   }
 };
+
 
 /**
  * Controller to get all civic issues reported by the authenticated citizen.

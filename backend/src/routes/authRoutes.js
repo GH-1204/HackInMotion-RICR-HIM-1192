@@ -23,15 +23,29 @@ router.post('/register', registerUser);
 // POST /api/auth/login (with brute-force rate limiting)
 router.post('/login', loginLimiter, loginUser);
 
+const User = require('../models/User');
+
 // GET /api/auth/me - Authenticated user details
-router.get('/me', authMiddleware, (req, res) => {
-  res.status(200).json({
-    success: true,
-    user: {
-      userId: req.user.userId,
-      role: req.user.role
+router.get('/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('name email role createdAt');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
-  });
+    res.status(200).json({
+      success: true,
+      user: {
+        userId: user._id,
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        createdAt: user.createdAt
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error retrieving current user' });
+  }
 });
 
 // Temporary RBAC test endpoint: CITIZEN only
