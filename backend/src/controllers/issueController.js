@@ -26,7 +26,7 @@ const createIssue = async (req, res) => {
       });
     }
 
-    const { title, description, category, location } = validationResult.data;
+    const { title, description, category, location, photo } = validationResult.data;
 
     // 2. Automatically resolve active department from the issue category
     const department = await getDepartmentByCategory(category);
@@ -46,11 +46,13 @@ const createIssue = async (req, res) => {
       category,
       location,
       department: department._id,
-      citizen: req.user.userId
+      citizen: req.user.userId,
+      ...(photo && { photo })
     });
 
     // 4. Save to MongoDB
     const savedIssue = await newIssue.save();
+
 
     // 5. Return successful response
     return res.status(201).json({

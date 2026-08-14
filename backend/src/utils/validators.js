@@ -69,8 +69,18 @@ const createIssueSchema = z.object({
       address: z.string().trim().optional()
     },
     { required_error: 'Location is required' }
-  )
+  ),
+  photo: z
+    .object({
+      url: z
+        .string({ required_error: 'Photo URL is required' })
+        .trim()
+        .url({ message: 'Photo URL must be a valid URL' }),
+      publicId: z.string().trim().optional()
+    })
+    .optional()
 });
+
 
 // Schema for Admin Status Update
 const updateStatusSchema = z.object({
