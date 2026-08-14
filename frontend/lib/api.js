@@ -114,7 +114,18 @@ export const api = {
       request(`/api/admin/issues/${id}`, {
         method: "GET",
       }),
+    updateStatus: (id, payload) =>
+      request(`/api/admin/issues/${id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    resolveIssue: (id, payload) =>
+      request(`/api/admin/issues/${id}/resolve`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
   },
 };
 
 export default api;
+

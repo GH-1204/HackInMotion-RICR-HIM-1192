@@ -2,10 +2,9 @@
 
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import StatusBadge from "@/components/issues/StatusBadge";
 import PriorityBadge from "@/components/issues/PriorityBadge";
@@ -15,33 +14,30 @@ import {
   MapPin, 
   Clock, 
   Calendar, 
-  ShieldCheck, 
   AlertCircle, 
   CheckCircle2, 
   FileText, 
   Info,
-  Navigation
+  History,
+  Building2
 } from "lucide-react";
 
 export default function CitizenIssueDetailPage({ params }) {
-  // Unwrap params using React.use
   const resolvedParams = use(params);
   const { id } = resolvedParams;
 
   const [issue, setIssue] = useState(null);
+  const [history, setHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [notFound, setNotFound] = useState(false);
 
   const fetchIssueDetail = async () => {
-    setIsLoading(true);
-    setError(null);
-    setNotFound(false);
-
     try {
       const res = await api.issues.getById(id);
       if (res?.success && res.issue) {
         setIssue(res.issue);
+        setHistory(Array.isArray(res.history) ? res.history : []);
       } else {
         setNotFound(true);
       }
@@ -57,9 +53,36 @@ export default function CitizenIssueDetailPage({ params }) {
   };
 
   useEffect(() => {
-    if (id) {
-      fetchIssueDetail();
-    }
+    let isMounted = true;
+    if (!id) return;
+
+    api.issues.getById(id)
+      .then((res) => {
+        if (!isMounted) return;
+        if (res?.success && res.issue) {
+          setIssue(res.issue);
+          setHistory(Array.isArray(res.history) ? res.history : []);
+        } else {
+          setNotFound(true);
+        }
+      })
+      .catch((err) => {
+        if (!isMounted) return;
+        if (err.status === 404 || err.status === 400) {
+          setNotFound(true);
+        } else {
+          setError(err.message || "Failed to load issue details");
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, [id]);
 
   if (isLoading) {
@@ -166,7 +189,7 @@ export default function CitizenIssueDetailPage({ params }) {
       {/* Details Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         
-        {/* Description & Resolution (Left 2 cols) */}
+        {/* Description, Photo, Resolution, History (Left 2 cols) */}
         <div className="md:col-span-2 space-y-6">
           
           {/* Description */}
@@ -183,6 +206,27 @@ export default function CitizenIssueDetailPage({ params }) {
               </p>
             </CardContent>
           </Card>
+
+          {/* Evidence Photo if present */}
+          {issue.photo?.url && (
+            <Card className="border-slate-200 dark:border-slate-800 overflow-hidden">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                  Uploaded Evidence Photo
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-950">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={issue.photo.url}
+                    alt="Citizen submitted evidence"
+                    className="w-full max-h-80 object-contain mx-auto"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Resolution Details if present */}
           {issue.resolution && (issue.resolution.notes || issue.resolution.resolvedAt) && (
@@ -208,19 +252,73 @@ export default function CitizenIssueDetailPage({ params }) {
             </Card>
           )}
 
+          {/* Status History Timeline */}
+          {history.length > 0 && (
+            <Card className="border-slate-200 dark:border-slate-800">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold flex items-center gap-2">
+                  <History className="w-4 h-4 text-blue-600" />
+                  Status Updates & History ({history.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3 relative pl-4 border-l-2 border-slate-200 dark:border-slate-800 ml-2">
+                  {history.map((record, index) => (
+                    <div key={record._id || index} className="relative space-y-1 text-xs">
+                      <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-blue-600 ring-4 ring-white dark:ring-slate-900" />
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">
+                          {record.previousStatus} &rarr; {record.newStatus}
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          {formatDate(record.createdAt)}
+                        </span>
+                      </div>
+                      {record.note && (
+                        <p className="text-slate-600 dark:text-slate-400 italic">
+                          &ldquo;{record.note}&rdquo;
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Status lifecycle info */}
           <div className="p-4 rounded-xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 text-xs text-blue-800 dark:text-blue-200 space-y-1">
             <div className="flex items-center gap-1.5 font-semibold">
               <Info className="w-4 h-4" /> Current Status: {issue.status}
             </div>
             <p className="text-blue-700 dark:text-blue-300">
-              Municipal authorities will review and acknowledge this report. Status changes and resolution feedback will reflect here in real-time.
+              Municipal authorities process reports through defined lifecycle stages. Real-time updates and resolution notes are shown above.
             </p>
           </div>
         </div>
 
         {/* Location & Metadata (Right 1 col) */}
         <div className="space-y-6">
+          
+          {/* Assigned Department */}
+          {issue.department && (
+            <Card className="border-slate-200 dark:border-slate-800">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-blue-600" />
+                  Assigned Department
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 text-xs">
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                  {issue.department.name}
+                </p>
+                <p className="text-slate-500 font-mono">Code: {issue.department.code}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Location */}
           <Card className="border-slate-200 dark:border-slate-800">
             <CardHeader className="pb-3">
               <CardTitle className="text-base font-semibold flex items-center gap-2">

@@ -113,7 +113,7 @@ const getIssueById = async (req, res) => {
     const issue = await Issue.findOne({
       _id: id,
       citizen: req.user.userId
-    });
+    }).populate('department', 'name code category');
 
     // 3. If issue does not exist OR belongs to another citizen, return 404
     if (!issue) {
@@ -123,11 +123,18 @@ const getIssueById = async (req, res) => {
       });
     }
 
-    // 4. Return the issue details
+    // 4. Fetch status history
+    const StatusHistory = require('../models/StatusHistory');
+    const history = await StatusHistory.find({ issue: id })
+      .sort({ createdAt: -1 });
+
+    // 5. Return the issue details and history
     return res.status(200).json({
       success: true,
-      issue
+      issue,
+      history
     });
+
   } catch (error) {
     console.error('Error fetching issue details:', error.message);
     return res.status(500).json({

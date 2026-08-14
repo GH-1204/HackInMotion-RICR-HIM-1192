@@ -61,11 +61,18 @@ const getIssueById = async (req, res) => {
       });
     }
 
-    // 4. Return the complete issue details
+    // 4. Query status history records for audit trail
+    const history = await StatusHistory.find({ issue: id })
+      .sort({ createdAt: -1 })
+      .populate('changedBy', 'name email role');
+
+    // 5. Return the complete issue details and history
     return res.status(200).json({
       success: true,
-      issue
+      issue,
+      history
     });
+
   } catch (error) {
     console.error('Error fetching admin issue details:', error.message);
     return res.status(500).json({
