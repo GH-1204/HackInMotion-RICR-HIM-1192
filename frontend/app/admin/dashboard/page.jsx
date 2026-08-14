@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useAuth } from "@/components/auth/AuthProvider";
 import api from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { CATEGORIES } from "@/lib/constants";
@@ -21,16 +20,15 @@ import {
   ArrowRight, 
   AlertCircle,
   FileText,
-  Building2,
-  BarChart3,
-  MapPin,
   RefreshCw,
-  Zap,
-  Users
+  Eye,
+  ShieldCheck,
+  MapPin,
+  Users,
+  Flame
 } from "lucide-react";
 
 export default function AdminDashboard() {
-  const { user } = useAuth();
   const [issues, setIssues] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -53,16 +51,38 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    fetchAdminIssues();
+    let isMounted = true;
+    api.admin.getAllIssues()
+      .then((res) => {
+        if (!isMounted) return;
+        if (res?.success && Array.isArray(res.issues)) {
+          setIssues(res.issues);
+        } else {
+          setIssues([]);
+        }
+      })
+      .catch((err) => {
+        if (!isMounted) return;
+        setError(err.message || "Failed to load admin issues data");
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  // Compute operational distributions from real issues data
+  // Compute real-time lifecycle counts from MongoDB data
   const totalCount = issues.length;
   const reportedCount = issues.filter((i) => i.status === "REPORTED").length;
   const acknowledgedCount = issues.filter((i) => i.status === "ACKNOWLEDGED").length;
   const inProgressCount = issues.filter((i) => i.status === "IN_PROGRESS").length;
-  const resolvedCount = issues.filter((i) => i.status === "RESOLVED" || i.status === "CLOSED").length;
-  const criticalCount = issues.filter((i) => i.priority === "CRITICAL" || i.priority === "HIGH").length;
+  const resolvedCount = issues.filter((i) => i.status === "RESOLVED").length;
+  const closedCount = issues.filter((i) => i.status === "CLOSED").length;
 
   // Category counts
   const categoryCounts = CATEGORIES.map((cat) => ({
@@ -73,6 +93,72 @@ export default function AdminDashboard() {
   // Department counts from populated department reference
   const assignedCount = issues.filter((i) => i.department).length;
   const unassignedCount = totalCount - assignedCount;
+
+  // Real-time deterministic Civic Hotspot calculation (Group by 2-decimal rounded coordinate grid ~1.1km)
+  const hotspots = (() => {
+    const validLocationIssues = issues.filter(
+      (i) =>
+        i.location &&
+        typeof i.location.latitude === "number" &&
+        typeof i.location.longitude === "number" &&
+        !isNaN(i.location.latitude) &&
+        !isNaN(i.location.longitude)
+    );
+
+    if (validLocationIssues.length === 0) return [];
+
+    const clusters = {};
+
+    validLocationIssues.forEach((issue) => {
+      const lat = issue.location.latitude;
+      const lng = issue.location.longitude;
+      const gridKey = `${lat.toFixed(2)},${lng.toFixed(2)}`;
+
+      if (!clusters[gridKey]) {
+        clusters[gridKey] = {
+          key: gridKey,
+          lat,
+          lng,
+          addresses: [],
+          categories: {},
+          count: 0,
+        };
+      }
+
+      clusters[gridKey].count += 1;
+      if (issue.location.address?.trim()) {
+        clusters[gridKey].addresses.push(issue.location.address.trim());
+      }
+      const cat = issue.category || "OTHER";
+      clusters[gridKey].categories[cat] = (clusters[gridKey].categories[cat] || 0) + 1;
+    });
+
+    return Object.values(clusters)
+      .filter((c) => c.count >= 2) // Minimum 2 reports required for a cluster
+      .map((c) => {
+        let dominantCat = "OTHER";
+        let maxCatCount = 0;
+        Object.entries(c.categories).forEach(([cat, cnt]) => {
+          if (cnt > maxCatCount) {
+            maxCatCount = cnt;
+            dominantCat = cat;
+          }
+        });
+
+        const displayLocation =
+          c.addresses.length > 0
+            ? c.addresses[0]
+            : `Coordinates (${c.lat.toFixed(3)}°, ${c.lng.toFixed(3)}°)`;
+
+        return {
+          ...c,
+          displayLocation,
+          dominantCategory: dominantCat,
+        };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  })();
 
   const recentIssues = issues.slice(0, 6);
 
@@ -116,80 +202,101 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* Primary KPI Metrics */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-5">
+      {/* Primary KPI Metrics: Total + 5 Lifecycle Statuses */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+        {/* Total */}
         <Card className="border-slate-200 dark:border-slate-800 shadow-xs">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-slate-500">
-              Total Grievances
+          <CardHeader className="flex flex-row items-center justify-between pb-1.5 p-4">
+            <CardTitle className="text-xs font-semibold text-slate-500">
+              Total Issues
             </CardTitle>
             <FileText className="w-4 h-4 text-indigo-600" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-50">
+          <CardContent className="p-4 pt-0">
+            <div className="text-2xl font-bold text-slate-900 dark:text-slate-50">
               {isLoading ? "-" : totalCount}
             </div>
-            <p className="text-xs text-slate-500 mt-1">Across all categories</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">All complaints</p>
           </CardContent>
         </Card>
 
+        {/* REPORTED */}
         <Card className="border-slate-200 dark:border-slate-800 shadow-xs">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-slate-500">
-              Newly Reported
+          <CardHeader className="flex flex-row items-center justify-between pb-1.5 p-4">
+            <CardTitle className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+              REPORTED
             </CardTitle>
             <Clock className="w-4 h-4 text-blue-600" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl sm:text-3xl font-bold text-blue-600">
+          <CardContent className="p-4 pt-0">
+            <div className="text-2xl font-bold text-blue-600">
               {isLoading ? "-" : reportedCount}
             </div>
-            <p className="text-xs text-slate-500 mt-1">Awaiting review</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Newly submitted</p>
           </CardContent>
         </Card>
 
+        {/* ACKNOWLEDGED */}
         <Card className="border-slate-200 dark:border-slate-800 shadow-xs">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-slate-500">
-              In Progress
+          <CardHeader className="flex flex-row items-center justify-between pb-1.5 p-4">
+            <CardTitle className="text-xs font-semibold text-purple-600 dark:text-purple-400">
+              ACKNOWLEDGED
+            </CardTitle>
+            <Eye className="w-4 h-4 text-purple-600" />
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <div className="text-2xl font-bold text-purple-600">
+              {isLoading ? "-" : acknowledgedCount}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5">Under review</p>
+          </CardContent>
+        </Card>
+
+        {/* IN_PROGRESS */}
+        <Card className="border-slate-200 dark:border-slate-800 shadow-xs">
+          <CardHeader className="flex flex-row items-center justify-between pb-1.5 p-4">
+            <CardTitle className="text-xs font-semibold text-amber-500">
+              IN_PROGRESS
             </CardTitle>
             <AlertTriangle className="w-4 h-4 text-amber-500" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl sm:text-3xl font-bold text-amber-500">
+          <CardContent className="p-4 pt-0">
+            <div className="text-2xl font-bold text-amber-500">
               {isLoading ? "-" : inProgressCount}
             </div>
-            <p className="text-xs text-slate-500 mt-1">Under field repair</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Field repair</p>
           </CardContent>
         </Card>
 
+        {/* RESOLVED */}
         <Card className="border-slate-200 dark:border-slate-800 shadow-xs">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-slate-500">
-              Resolved & Closed
+          <CardHeader className="flex flex-row items-center justify-between pb-1.5 p-4">
+            <CardTitle className="text-xs font-semibold text-emerald-600">
+              RESOLVED
             </CardTitle>
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl sm:text-3xl font-bold text-emerald-600">
+          <CardContent className="p-4 pt-0">
+            <div className="text-2xl font-bold text-emerald-600">
               {isLoading ? "-" : resolvedCount}
             </div>
-            <p className="text-xs text-slate-500 mt-1">Successfully resolved</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Work completed</p>
           </CardContent>
         </Card>
 
-        <Card className="border-slate-200 dark:border-slate-800 shadow-xs col-span-2 lg:col-span-1">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs sm:text-sm font-medium text-slate-500">
-              High / Critical
+        {/* CLOSED */}
+        <Card className="border-slate-200 dark:border-slate-800 shadow-xs">
+          <CardHeader className="flex flex-row items-center justify-between pb-1.5 p-4">
+            <CardTitle className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+              CLOSED
             </CardTitle>
-            <Zap className="w-4 h-4 text-red-500" />
+            <ShieldCheck className="w-4 h-4 text-slate-500" />
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl sm:text-3xl font-bold text-red-600">
-              {isLoading ? "-" : criticalCount}
+          <CardContent className="p-4 pt-0">
+            <div className="text-2xl font-bold text-slate-700 dark:text-slate-300">
+              {isLoading ? "-" : closedCount}
             </div>
-            <p className="text-xs text-slate-500 mt-1">High priority issues</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Finalized</p>
           </CardContent>
         </Card>
       </div>
@@ -207,18 +314,18 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Derived Distributions Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* Derived Distributions & Hotspots Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Category Breakdown (Derived from live API) */}
-        <Card className="md:col-span-2 border-slate-200 dark:border-slate-800">
+        <Card className="border-slate-200 dark:border-slate-800">
           <CardHeader className="pb-3 flex flex-row items-center justify-between">
             <div>
               <CardTitle className="text-base font-bold">Category Distribution</CardTitle>
-              <CardDescription>Derived directly from live issue documents</CardDescription>
+              <CardDescription>Breakdown by civic domain</CardDescription>
             </div>
             <span className="text-xs font-medium px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-              Live API Data
+              Live API
             </span>
           </CardHeader>
           <CardContent>
@@ -246,11 +353,75 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
 
-        {/* Future Modules / Department Overview */}
+        {/* Civic Hotspots & Issue Density MVP */}
+        <Card className="border-amber-200 dark:border-amber-900/50 bg-gradient-to-br from-amber-50/30 via-white to-white dark:from-amber-950/20 dark:via-slate-900 dark:to-slate-900">
+          <CardHeader className="pb-3 flex flex-row items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Flame className="w-4 h-4 text-amber-600" />
+                <CardTitle className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Civic Hotspots
+                </CardTitle>
+              </div>
+              <CardDescription>
+                High-density clusters from MongoDB coordinates
+              </CardDescription>
+            </div>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+              Density Analysis
+            </span>
+          </CardHeader>
+          <CardContent>
+            {hotspots.length === 0 ? (
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500">
+                <MapPin className="w-5 h-5 text-slate-400 mx-auto mb-1.5" />
+                <p className="font-medium text-slate-700 dark:text-slate-300">
+                  Not enough location data to identify hotspots.
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Hotspots appear when 2 or more reports occur in the same geographic zone.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {hotspots.map((spot, index) => (
+                  <div
+                    key={spot.key}
+                    className="flex items-center justify-between p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-amber-300 transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-6 h-6 rounded-lg bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 font-bold text-xs flex items-center justify-center shrink-0">
+                        #{index + 1}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">
+                          {spot.displayLocation}
+                        </p>
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                          <span className="font-medium text-indigo-600 dark:text-indigo-400">
+                            {spot.dominantCategory}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0 ml-2">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900/60">
+                        {spot.count} issues
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Department Overview */}
         <div className="space-y-6">
           <Card className="border-slate-200 dark:border-slate-800">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base font-bold">Department Assignment</CardTitle>
+              <CardTitle className="text-base font-bold">Department Routing</CardTitle>
               <CardDescription>Current workforce routing status</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -261,35 +432,6 @@ export default function AdminDashboard() {
               <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
                 <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Pending Assignment</span>
                 <span className="text-sm font-bold text-amber-600">{unassignedCount}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Upcoming System Modules Card */}
-          <Card className="border-dashed border-2 border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Future Platform Extensions
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-xs">
-              <div className="flex items-center justify-between py-1.5 border-b border-slate-100 dark:border-slate-800">
-                <span className="text-slate-600 dark:text-slate-400">Dedicated Analytics & SLAs</span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                  Coming Soon
-                </span>
-              </div>
-              <div className="flex items-center justify-between py-1.5 border-b border-slate-100 dark:border-slate-800">
-                <span className="text-slate-600 dark:text-slate-400">Automated Status Routing</span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                  Coming Soon
-                </span>
-              </div>
-              <div className="flex items-center justify-between py-1.5">
-                <span className="text-slate-600 dark:text-slate-400">Geospatial Hotspot Map</span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                  Coming Soon
-                </span>
               </div>
             </CardContent>
           </Card>
